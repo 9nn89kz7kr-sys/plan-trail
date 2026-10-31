@@ -140,6 +140,16 @@ textarea{min-height:70px;resize:vertical}
 .gate{max-width:460px;margin:12vh auto 0;text-align:center}
 .gate h1{font-size:2.6rem;margin-bottom:10px}
 .gate p{color:var(--muted)}
+.coachbar{background:var(--ink);color:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.coachbar label{display:flex;align-items:center;gap:8px;font-weight:600;flex:1;min-width:220px}
+.coachbar select{flex:1;background:var(--bg);color:var(--ink)}
+.coachbar .btn{background:transparent;color:var(--bg);border-color:color-mix(in srgb,var(--bg) 50%,transparent)}
+.coachbar.other{background:var(--red)}
+.coachnote{flex-basis:100%;font-size:.88rem;opacity:.9}
+.acc{list-style:none;margin:8px 0;padding:0;border-top:1px solid var(--rule)}
+.acc li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--rule)}
+.acc .s{font-size:.85rem;color:var(--muted);display:block}
+.addrow{display:flex;gap:8px;margin-top:8px}
 .foot{margin-top:40px;font-size:.85rem;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 dialog{border:1px solid var(--rule);border-radius:12px;background:var(--surface);color:var(--ink);padding:0;width:min(640px,100% - 20px);max-height:calc(100% - 40px)}
 dialog::backdrop{background:rgba(10,15,20,.5)}
@@ -170,9 +180,15 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
   <h1>Plan trail</h1>
   <p id="gatemsg">Chargement…</p>
   <button class="btn primary hidden" id="login" type="button">Se connecter avec Google</button>
+  <button class="btn hidden" id="gatelogout" type="button">Changer de compte</button>
 </div>
 
 <div id="app" class="wrap hidden">
+  <div class="coachbar hidden" id="coachbar">
+    <label for="athsel">Programme affiché <select id="athsel"></select></label>
+    <button class="btn" id="manageacc" type="button">Gérer les accès</button>
+    <div class="coachnote hidden" id="coachnote"></div>
+  </div>
   <header class="top">
     <div>
       <h1 id="hero-name">Plan trail</h1>
@@ -235,6 +251,12 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
         <button class="btn primary" id="exportics" type="button">Télécharger le calendrier (.ics)</button>
       </div>
       <div class="panel">
+        <h3>Réglages du programme</h3>
+        <p class="muted">Le lundi de la semaine 1. Toutes les semaines du programme sont numérotées à partir de cette date.</p>
+        <div class="addrow"><input type="date" id="planstart" style="max-width:200px"><button class="btn" id="saveplanstart" type="button">Enregistrer</button></div>
+        <div class="msg" id="startmsg"></div>
+      </div>
+      <div class="panel">
         <h3>Sauvegarde</h3>
         <p class="muted">Le fichier de sauvegarde contient tout : plan, réalisé, bilans et objectifs. C’est aussi celui à envoyer à Claude pour faire le point.</p>
         <div class="row-actions">
@@ -255,7 +277,7 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------- setup ---------- */
 const $ = id => document.getElementById(id);
@@ -268,7 +290,8 @@ if(!cfg.apiKey || cfg.apiKey.startsWith("A_REMPLACER")){
 const fbApp = initializeApp(cfg);
 const auth = getAuth(fbApp);
 const fs = initializeFirestore(fbApp,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
-let uid=null, unsubs=[];
+let uid=null, viewedUid=null, unsubs=[], coachUnsubs=[], isCoach=false, profiles={}, access=[], viewedProfile={};
+const COACH_EMAILS=(window.COACH_EMAILS||[]).map(e=>String(e).trim().toLowerCase()).filter(Boolean);
 
 /* ---------- constants & helpers ---------- */
 const PHASES = {"Reprise":"--p-rep","Base générale":"--p-bg","Base spécifique":"--p-bs","Spécifique":"--p-sp","Affûtage":"--p-af","Récupération":"--p-rep"};
@@ -284,7 +307,7 @@ const pad = n => String(n).padStart(2,"0");
 const wid = n => "w"+pad(n);
 const parseISO = s => { const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); };
 const iso = d => d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
-const START = parseISO(PLAN_START);
+let START = parseISO(PLAN_START);
 const today0 = () => { const t=new Date(); return new Date(t.getFullYear(),t.getMonth(),t.getDate()); };
 const fmt = d => d.getDate()+" "+MONTHS[d.getMonth()];
 const longDate = d => DAYS_LONG[d.getDay()]+" "+d.getDate()+" "+MONTHS[d.getMonth()]+" "+d.getFullYear();
@@ -301,7 +324,7 @@ function durTxt(m){ m=+m||0; const h=Math.floor(m/60), mm=m%60; return h? h+" h"
 function objList(){ return Object.values(objectifs).filter(o=>o&&/^\d{4}-\d{2}-\d{2}$/.test(o.date||"")).sort((a,b)=>a.date.localeCompare(b.date)); }
 function objSub(o){ return [+o.km?o.km+" km":"",+o.dp?o.dp+" m D+":""].filter(Boolean).join(" et "); }
 function download(name,text,type){ const blob=new Blob([text],{type}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000); }
-const userDoc = (...p) => doc(fs,"users",uid,...p);
+const userDoc = (...p) => doc(fs,"users",viewedUid,...p);
 const say = (id,txt,err) => { const m=$(id); m.className="msg"+(err?" err":""); m.textContent=txt; };
 
 /* ---------- writes ---------- */
@@ -317,20 +340,85 @@ $("login").addEventListener("click",async()=>{
 });
 getRedirectResult(auth).catch(()=>{});
 $("logout").addEventListener("click",()=>signOut(auth));
-onAuthStateChanged(auth,user=>{
-  unsubs.forEach(u=>u()); unsubs=[]; plan={}; reel={}; objectifs={}; loaded=false;
-  if(!user){ uid=null; $("app").classList.add("hidden"); $("gate").classList.remove("hidden"); $("gatemsg").textContent="Connecte-toi pour retrouver ton plan sur tous tes appareils."; $("login").classList.remove("hidden"); return; }
-  uid=user.uid; $("gate").classList.add("hidden"); $("app").classList.remove("hidden"); $("who").textContent="Connecté : "+(user.email||"compte Google");
-  shownWeek=null; renderAll();
-  const timer=setTimeout(()=>{ if(!loaded) $("where").textContent="Le plan ne répond pas encore. Vérifie ta connexion."; },10000);
-  unsubs.push(onSnapshot(collection(fs,"users",uid,"plan"),snap=>{
+$("gatelogout").addEventListener("click",()=>signOut(auth));
+const withTimeout=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(()=>r("timeout"),ms))]);
+function showGate(msg,signedIn){ $("app").classList.add("hidden"); $("gate").classList.remove("hidden"); $("gatemsg").textContent=msg; $("login").classList.toggle("hidden",!!signedIn); $("gatelogout").classList.toggle("hidden",!signedIn); }
+onAuthStateChanged(auth,async user=>{
+  unsubs.forEach(u=>u()); unsubs=[]; coachUnsubs.forEach(u=>u()); coachUnsubs=[];
+  plan={}; reel={}; objectifs={}; profiles={}; access=[]; loaded=false;
+  if(!user){ uid=null; viewedUid=null; showGate("Connecte-toi pour retrouver ton programme sur tous tes appareils.",false); return; }
+  uid=user.uid; const email=(user.email||"").toLowerCase();
+  isCoach=COACH_EMAILS.includes(email);
+  showGate("Connexion en cours…",true);
+  try{ await withTimeout(setDoc(doc(fs,"users",uid),{email,name:user.displayName||"",lastLogin:new Date().toISOString()},{merge:true}),6000); }
+  catch(e){ if(e.code==="permission-denied"){ showGate("Le compte "+email+" n’a pas encore accès à ce site. Demande au coach de t’ajouter, puis reconnecte-toi.",true); return; } }
+  $("gate").classList.add("hidden"); $("app").classList.remove("hidden");
+  $("who").textContent="Connecté : "+(email||"compte Google")+(isCoach?" (coach)":"");
+  $("coachbar").classList.toggle("hidden",!isCoach);
+  if(isCoach){
+    coachUnsubs.push(onSnapshot(collection(fs,"users"),snap=>{ const n={}; snap.forEach(d=>n[d.id]=d.data()); profiles=n; renderCoachBar(); },()=>{}));
+    coachUnsubs.push(onSnapshot(doc(fs,"config","acces"),d=>{ access=(d.exists()&&d.data().emails)||[]; if($("dlg").open&&$("dlg").dataset.kind==="acc") openAccess(); },()=>{}));
+  }
+  viewUser(uid);
+});
+function viewUser(target){
+  unsubs.forEach(u=>u()); unsubs=[];
+  viewedUid=target; plan={}; reel={}; objectifs={}; viewedProfile={}; loaded=false; shownWeek=null; openSessions.clear();
+  START=parseISO(PLAN_START); if(chart){ chart.destroy(); chart=null; }
+  renderCoachBar(); renderAll();
+  const timer=setTimeout(()=>{ if(!loaded) $("where").textContent="Le programme ne répond pas encore. Vérifie ta connexion."; },10000);
+  unsubs.push(onSnapshot(doc(fs,"users",target),d=>{ viewedProfile=d.exists()?d.data():{}; START=parseISO(/^\d{4}-\d{2}-\d{2}$/.test(viewedProfile.planStart||"")?viewedProfile.planStart:PLAN_START); $("planstart").value=iso(START); renderCoachBar(); renderAll(); },()=>{}));
+  unsubs.push(onSnapshot(collection(fs,"users",target,"plan"),snap=>{
     const next={}; snap.forEach(d=>{ next[d.id]=d.data(); }); plan=next;
     if(!snap.metadata.fromCache||snap.size){ loaded=true; clearTimeout(timer); }
     if(shownWeek===null&&snap.size) shownWeek=currentWeek();
     renderAll();
-  },err=>{ clearTimeout(timer); loaded=true; $("where").textContent="Le plan n’a pas pu être chargé ("+err.code+"). Vérifie les règles Firestore."; }));
-  unsubs.push(onSnapshot(collection(fs,"users",uid,"reel"),snap=>{ const n={}; snap.forEach(d=>n[d.id]=d.data()); reel=n; renderAll(); },()=>{}));
-  unsubs.push(onSnapshot(collection(fs,"users",uid,"objectifs"),snap=>{ const n={}; snap.forEach(d=>n[d.id]={...d.data(),id:d.id}); objectifs=n; renderAll(); },()=>{}));
+  },err=>{ clearTimeout(timer); loaded=true; $("where").textContent="Le programme n’a pas pu être chargé ("+err.code+"). Vérifie les règles Firestore."; }));
+  unsubs.push(onSnapshot(collection(fs,"users",target,"reel"),snap=>{ const n={}; snap.forEach(d=>n[d.id]=d.data()); reel=n; renderAll(); },()=>{}));
+  unsubs.push(onSnapshot(collection(fs,"users",target,"objectifs"),snap=>{ const n={}; snap.forEach(d=>n[d.id]={...d.data(),id:d.id}); objectifs=n; renderAll(); },()=>{}));
+}
+
+/* ---------- coach ---------- */
+const personName=p=>(p&&(p.name||p.email))||"Athlète";
+function renderCoachBar(){
+  if(!isCoach) return;
+  const sel=$("athsel"); sel.replaceChildren();
+  sel.append(el("option",{value:uid},"Mon programme"));
+  Object.entries(profiles).filter(([id])=>id!==uid).sort((a,b)=>personName(a[1]).localeCompare(personName(b[1]))).forEach(([id,p])=>sel.append(el("option",{value:id},personName(p)+(p.email&&p.name?" ("+p.email+")":""))));
+  sel.value=viewedUid||uid;
+  const other=viewedUid&&viewedUid!==uid;
+  $("coachbar").classList.toggle("other",!!other);
+  $("coachnote").classList.toggle("hidden",!other);
+  $("coachnote").textContent=other?"Tu consultes et modifies le programme de "+personName(profiles[viewedUid])+". Tes changements s’appliquent à son programme.":"";
+}
+$("athsel").addEventListener("change",e=>{ viewUser(e.target.value); window.scrollTo({top:0}); });
+function openAccess(){
+  const form=$("dlgform"); form.replaceChildren(); $("dlg").dataset.kind="acc";
+  const known=new Set(Object.values(profiles).map(p=>(p.email||"").toLowerCase()));
+  const ul=el("ul",{class:"acc"});
+  if(!access.length) ul.append(el("li",{class:"muted",text:"Aucun athlète autorisé pour l’instant."}));
+  access.slice().sort().forEach(em=>{ const del=el("button",{type:"button",class:"btn danger"},"Retirer");
+    del.addEventListener("click",async()=>{ if(!confirm("Retirer l’accès de "+em+" ? Son programme est conservé, mais il ne pourra plus se connecter.")) return; try{ await setDoc(doc(fs,"config","acces"),{emails:arrayRemove(em)},{merge:true}); }catch(e){ err.textContent="Modification impossible ("+e.code+")."; } });
+    ul.append(el("li",{},el("span",{},em,el("span",{class:"s",text:known.has(em)?"S’est déjà connecté":"En attente de première connexion"})),del)); });
+  const input=el("input",{type:"text",placeholder:"adresse Gmail de l’athlète",inputmode:"email",autocomplete:"off"});
+  const err=el("div",{class:"msg err"});
+  const add=el("button",{type:"button",class:"btn primary"},"Autoriser");
+  add.addEventListener("click",async()=>{ const em=input.value.trim().toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){ err.textContent="Adresse e-mail invalide."; return; }
+    try{ await setDoc(doc(fs,"config","acces"),{emails:arrayUnion(em)},{merge:true}); input.value=""; err.textContent=""; }catch(e){ err.textContent="Ajout impossible ("+e.code+"). Vérifie que ton adresse est bien celle du coach dans firestore.rules."; } });
+  form.append(el("h2",{},"Gérer les accès"),
+    el("p",{class:"muted",text:"Chaque athlète autorisé se connecte avec son compte Google et ne voit que son propre programme. Toi, tu peux tous les consulter et les modifier."}),
+    ul,el("div",{class:"addrow"},input,add),err,
+    el("div",{class:"sticky-actions"},el("button",{type:"button",class:"btn",onclick:()=>$("dlg").close()},"Fermer")));
+  if(!$("dlg").open) $("dlg").showModal();
+}
+$("manageacc").addEventListener("click",openAccess);
+$("dlg").addEventListener("close",()=>{ delete $("dlg").dataset.kind; });
+$("saveplanstart").addEventListener("click",async()=>{
+  const v=$("planstart").value; if(!/^\d{4}-\d{2}-\d{2}$/.test(v)){ say("startmsg","Choisis une date.",true); return; }
+  if(parseISO(v).getDay()!==1){ say("startmsg","Choisis un lundi : les semaines vont du lundi au dimanche.",true); return; }
+  if(Object.keys(plan).length&&v!==iso(START)){ say("startmsg","Ce programme contient déjà des séances : changer la date décalerait toutes les semaines. Supprime d’abord le programme ou demande à Claude de le recaler.",true); return; }
+  try{ await setDoc(doc(fs,"users",viewedUid),{planStart:v},{merge:true}); say("startmsg","Date de début enregistrée."); }catch(e){ say("startmsg","Enregistrement impossible ("+e.code+").",true); }
 });
 
 /* ---------- header ---------- */
@@ -680,7 +768,7 @@ $("exportics").addEventListener("click",()=>{
 
 /* ---------- backup ---------- */
 $("exportjson").addEventListener("click",()=>{
-  const data={version:1,exportedAt:new Date().toISOString(),planStart:PLAN_START,plan:Object.values(plan).sort((a,b)=>a.num-b.num),reel:Object.entries(reel).map(([id,v])=>({id,...v})),objectifs:objList()};
+  const data={version:1,exportedAt:new Date().toISOString(),planStart:iso(START),plan:Object.values(plan).sort((a,b)=>a.num-b.num),reel:Object.entries(reel).map(([id,v])=>({id,...v})),objectifs:objList()};
   download("plan-trail-sauvegarde-"+iso(today0())+".json",JSON.stringify(data,null,1),"application/json");
 });
 async function restore(data,label){
@@ -689,6 +777,7 @@ async function restore(data,label){
   data.plan.forEach(w=>{ if(w&&w.num) ops.push([userDoc("plan",wid(w.num)),w]); });
   (data.reel||[]).forEach(r=>{ if(r&&r.id){ const {id,...rest}=r; ops.push([userDoc("reel",id),rest]); } });
   (data.objectifs||[]).forEach(o=>{ if(o&&o.id) ops.push([userDoc("objectifs",o.id),o]); });
+  if(/^\d{4}-\d{2}-\d{2}$/.test(data.planStart||"")&&!Object.keys(plan).length) ops.push([doc(fs,"users",viewedUid),{...viewedProfile,planStart:data.planStart}]);
   try{ await batchWrite(ops); say("backupmsg",label+" : "+data.plan.length+" semaines chargées."); }
   catch(e){ say("backupmsg","Le chargement a échoué ("+(e.code||"erreur")+").",true); }
 }
