@@ -159,6 +159,20 @@ textarea{min-height:70px;resize:vertical}
 .acc li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--rule)}
 .acc .s{font-size:.85rem;color:var(--muted);display:block}
 .addrow{display:flex;gap:8px;margin-top:8px}
+.alerts{margin-top:14px;display:grid;gap:8px}
+.al{border-radius:9px;padding:9px 12px;border-left:4px solid var(--focus);background:color-mix(in srgb,var(--focus) 9%,var(--surface))}
+.al.warn{border-left-color:var(--yellow);background:color-mix(in srgb,var(--yellow) 14%,var(--surface))}
+.al.alert{border-left-color:var(--red);background:color-mix(in srgb,var(--red) 11%,var(--surface))}
+.al.ok{border-left-color:var(--p-bg);background:color-mix(in srgb,var(--p-bg) 12%,var(--surface))}
+.al b{display:block}
+.al span{display:block;font-size:.92rem}
+.al small{color:var(--muted);font-size:.8rem}
+.lvl{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;vertical-align:-1px;background:var(--p-bg)}
+.lvl.info{background:var(--focus)}.lvl.warn{background:var(--yellow)}.lvl.alert{background:var(--red)}
+.ov{list-style:none;margin:8px 0;padding:0;border-top:1px solid var(--rule)}
+.ov li{padding:10px 0;border-bottom:1px solid var(--rule)}
+.ov .h{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ov ul{margin:6px 0 0;padding-left:18px;font-size:.9rem}
 .foot{margin-top:40px;font-size:.85rem;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 dialog{border:1px solid var(--rule);border-radius:12px;background:var(--surface);color:var(--ink);padding:0;width:min(640px,100% - 20px);max-height:calc(100% - 40px)}
 dialog::backdrop{background:rgba(10,15,20,.5)}
@@ -195,6 +209,7 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
 <div id="app" class="wrap hidden">
   <div class="coachbar hidden" id="coachbar">
     <label for="athsel">Programme affiché <select id="athsel"></select></label>
+    <button class="btn" id="overview" type="button">Vue d’ensemble</button>
     <button class="btn" id="manageacc" type="button">Gérer les accès</button>
     <div class="coachnote hidden" id="coachnote"></div>
   </div>
@@ -219,6 +234,12 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
     </div>
     <div class="canvas-wrap"><canvas id="chart" aria-label="Graphique du volume hebdomadaire prévu et réalisé"></canvas></div>
     <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="chartbox">
+    <div class="chart-head"><h2>Bilans hebdomadaires</h2></div>
+    <div class="canvas-wrap" style="height:170px"><canvas id="bchart" aria-label="Évolution de la fatigue, du sommeil et du genou"></canvas></div>
+    <div class="legend" id="blegend"></div>
   </div>
 
   <section>
@@ -286,7 +307,7 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch, arrayUnion, arrayRemove, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------- setup ---------- */
 const $ = id => document.getElementById(id);
@@ -333,7 +354,7 @@ function el(tag,attrs={},...kids){ const e=document.createElement(tag); for(cons
 function totals(w){ const s=(w&&w.sessions)||[]; return {km:s.reduce((a,x)=>a+(+x.km||0),0), dm:s.reduce((a,x)=>a+(+x.dm||0),0), dp:s.reduce((a,x)=>a+(+x.dp||0),0), h:s.reduce((a,x)=>a+(+x.duration||0),0)/60}; }
 function durTxt(m){ m=+m||0; const h=Math.floor(m/60), mm=m%60; return h? h+" h"+(mm?" "+pad(mm):"") : mm+" min"; }
 function objList(){ return Object.values(objectifs).filter(o=>o&&/^\d{4}-\d{2}-\d{2}$/.test(o.date||"")).sort((a,b)=>a.date.localeCompare(b.date)); }
-function objSub(o){ return [+o.km?o.km+" km":"",+o.dp?o.dp+" m D+":""].filter(Boolean).join(" et "); }
+function objSub(o){ return [+o.km?o.km+" km":"",+o.dp?o.dp+" m D+":"",+o.dm?o.dm+" m D-":""].filter(Boolean).join(", "); }
 function download(name,text,type){ const blob=new Blob([text],{type}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000); }
 const userDoc = (...p) => doc(fs,"users",viewedUid,...p);
 const say = (id,txt,err) => { const m=$(id); m.className="msg"+(err?" err":""); m.textContent=txt; };
@@ -375,7 +396,7 @@ onAuthStateChanged(auth,async user=>{
 function viewUser(target){
   unsubs.forEach(u=>u()); unsubs=[];
   viewedUid=target; plan={}; reel={}; objectifs={}; viewedProfile={}; loaded=false; shownWeek=null; openSessions.clear();
-  START=parseISO(PLAN_START); if(chart){ chart.destroy(); chart=null; }
+  START=parseISO(PLAN_START); if(chart){ chart.destroy(); chart=null; } if(bchart){ bchart.destroy(); bchart=null; }
   renderCoachBar(); renderAll();
   const timer=setTimeout(()=>{ if(!loaded) $("where").textContent="Le programme ne répond pas encore. Vérifie ta connexion."; },10000);
   unsubs.push(onSnapshot(doc(fs,"users",target),d=>{ viewedProfile=d.exists()?d.data():{}; START=parseISO(/^\d{4}-\d{2}-\d{2}$/.test(viewedProfile.planStart||"")?viewedProfile.planStart:PLAN_START); $("planstart").value=iso(START); renderCoachBar(); renderAll(); },()=>{}));
@@ -506,7 +527,7 @@ function renderChart(){
   lg.append(el("span",{},el("i",{style:"background:"+red+";border-radius:50%"}),"Réalisé (import Garmin)"));
 }
 document.querySelectorAll(".seg button").forEach(b=>b.addEventListener("click",()=>{ metric=b.dataset.m; document.querySelectorAll(".seg button").forEach(x=>x.setAttribute("aria-pressed",x===b)); renderChart(); }));
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{ if(chart){chart.destroy();chart=null;} renderAll(); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{ if(chart){chart.destroy();chart=null;} if(bchart){bchart.destroy();bchart=null;} renderAll(); });
 
 /* ---------- objectifs ---------- */
 function renderObjs(){
@@ -519,7 +540,7 @@ function renderObjs(){
       el("span",{class:"j",text:j>0?"J-"+j:j===0?"Jour J":"Passé"})))); });
 }
 function openObjEditor(o){
-  const isNew=!o; const cur=isNew?{id:"o"+Date.now().toString(36),name:"",date:iso(today0()),prio:"B",km:0,dp:0,notes:""}:clean(o);
+  const isNew=!o; const cur=isNew?{id:"o"+Date.now().toString(36),name:"",date:iso(today0()),prio:"B",km:0,dp:0,dm:0,notes:""}:clean(o);
   const form=$("dlgform"); form.replaceChildren();
   const inp=(k,type="text",attrs={})=>{ const i=el(type==="textarea"?"textarea":"input",type==="textarea"?attrs:{type,...attrs}); i.value=cur[k]??""; i.addEventListener("input",()=>{cur[k]=type==="number"?(+i.value||0):i.value;}); return i; };
   const field=(lab,node)=>el("label",{class:"f"},lab,node);
@@ -535,7 +556,7 @@ function openObjEditor(o){
   if(!isNew){ const del=el("button",{type:"button",class:"btn danger"},"Supprimer l’objectif"); del.addEventListener("click",async()=>{ if(!confirm("Supprimer cet objectif ?")) return; try{ await deleteDoc(userDoc("objectifs",cur.id)); $("dlg").close(); }catch(e){ err.textContent="Suppression impossible ("+(e.code||"erreur")+")."; } }); actions.append(del); }
   form.append(el("h2",{},isNew?"Nouvel objectif":"Modifier l’objectif"),field("Nom de la course",inp("name")),
     el("div",{class:"grid2"},field("Date",inp("date","date")),field("Priorité",sel)),
-    el("div",{class:"grid2"},field("Distance (km)",inp("km","number",{min:0,step:1})),field("D+ (m)",inp("dp","number",{min:0,step:50}))),
+    el("div",{class:"grid3"},field("Distance (km)",inp("km","number",{min:0,step:1})),field("D+ (m)",inp("dp","number",{min:0,step:50})),field("D- (m)",inp("dm","number",{min:0,step:50}))),
     field("Notes (format, inscription, binôme…)",inp("notes","textarea")),err,actions);
   $("dlg").showModal();
 }
@@ -543,6 +564,7 @@ $("addobj").addEventListener("click",()=>openObjEditor(null));
 
 /* ---------- week view ---------- */
 function showWeek(n,scroll){ shownWeek=Math.min(maxWeek(),Math.max(1,n)); renderWeek(); if(scroll) $("week").scrollIntoView({behavior:"smooth",block:"start"}); }
+function appendAll(box,...k){ box.append(...k.flat().filter(x=>x!=null&&x!==false)); }
 function stat(k,v,r){ return el("div",{class:"stat"},el("div",{class:"k",text:k}),el("div",{class:"v",text:v}),r?el("div",{class:"r",text:r}):el("div",{class:"r muted",text:"Pas encore de données"})); }
 function renderWeek(){
   const box=$("week"); box.replaceChildren();
@@ -551,7 +573,7 @@ function renderWeek(){
   if(!w){ box.append(el("p",{class:"muted",text:loaded?"Pas de séances prévues pour cette semaine.":"Chargement…"})); if(loaded) box.append(el("div",{class:"row-actions"},el("button",{class:"btn primary",onclick:()=>openEditor(null,n)},"Ajouter une séance"))); return; }
   const start=parseISO(w.start), end=new Date(start.getFullYear(),start.getMonth(),start.getDate()+6);
   const t=totals(w), r=reel[wid(n)], has=r&&r.importedAt, mw=maxWeek();
-  box.append(
+  appendAll(box,
     el("div",{class:"wk-head"},el("h2",{},"Semaine "+n),
       el("div",{class:"wk-nav"},
         el("button",{class:"btn",onclick:()=>showWeek(n-1),disabled:n===1,"aria-label":"Semaine précédente"},"‹ Préc."),
@@ -564,7 +586,8 @@ function renderWeek(){
       stat("Kilomètres",r1(t.km)+" km",has?"Réalisé : "+r1(r.km||0)+" km":null),
       stat("D+",Math.round(t.dp)+" m",has?"Réalisé : "+Math.round(r.dp||0)+" m":null),
       stat("D- couru",Math.round(t.dm)+" m",has?"Réalisé : "+Math.round(r.dm||0)+" m":null),
-      stat("Durée",r1(t.h)+" h",has?"Réalisé : "+r1(r.hours||0)+" h":null)));
+      stat("Durée",r1(t.h)+" h",has?"Réalisé : "+r1(r.hours||0)+" h":null)),
+    renderAlerts(alertsForWeek(curCtx(),n)));
   const days=el("div",{class:"days"}), td=iso(today0());
   for(let i=0;i<7;i++){
     const d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i), ds=iso(d);
@@ -597,8 +620,8 @@ function sessionCard(w,s){
 }
 function bilanForm(n){
   const r=reel[wid(n)]||{};
-  const mk=(k,lab)=>{ const out=el("output",{text:(r[k]??"–")+"/10"}); const inp=el("input",{type:"range",min:0,max:10,step:1,value:r[k]??5}); inp.addEventListener("input",()=>out.textContent=inp.value+"/10"); return el("label",{},el("span",{},lab+" ",out),inp); };
-  const f=mk("fatigue","Fatigue"), s=mk("sommeil","Sommeil"), g=mk("genou","Genou (douleur)");
+  const mk=(k,lab)=>{ const out=el("output",{text:(r[k]??"–")+"/10"}); const inp=el("input",{type:"range",min:0,max:10,step:1,value:r[k]??({fatigue:3,sommeil:7,genou:0}[k])}); inp.addEventListener("input",()=>out.textContent=inp.value+"/10"); return el("label",{},el("span",{},lab+" ",out),inp); };
+  const f=mk("fatigue","Fatigue (10 = épuisé)"), s=mk("sommeil","Qualité du sommeil (10 = excellent)"), g=mk("genou","Genou (0 = aucune douleur)");
   const note=el("textarea",{placeholder:"Ressentis, douleurs, imprévus…"}); note.value=r.note||"";
   const msg=el("div",{class:"msg"}), save=el("button",{class:"btn primary",type:"button"},"Enregistrer le bilan");
   save.addEventListener("click",async()=>{ const val=x=>+x.querySelector("input").value;
@@ -813,7 +836,119 @@ $("loadinitial").addEventListener("click",async()=>{
 });
 
 /* ---------- render ---------- */
-function renderAll(){ renderHeader(); renderObjs(); renderChart(); renderWeek(); renderPlanList(); }
+/* ---------- règles d’adaptation ---------- */
+const LV={ok:0,info:1,warn:2,alert:3};
+const curCtx=()=>({plan,reel,objectifs,start:START});
+const wkc=(ctx,d)=>Math.floor(Math.round((d-ctx.start)/864e5)/7)+1;
+const shortDate=d=>DAYS_LONG[d.getDay()].slice(0,3)+". "+d.getDate()+" "+MONTHS[d.getMonth()];
+function dmSoon(ctx){
+  const t=today0(), lim=new Date(t.getFullYear(),t.getMonth(),t.getDate()+5), l=[];
+  Object.values(ctx.plan).forEach(w=>(w.sessions||[]).forEach(x=>{ const d=parseISO(x.date); if(d>=t&&d<=lim&&(+x.dm||0)>0) l.push(shortDate(d)+" : "+x.title+" ("+x.dm+" m D-)"); }));
+  return l.length?" Séances à adapter : "+l.join(" ; ")+".":"";
+}
+function ruleAlerts(ctx,s){
+  const out=[], P=ctx.plan[wid(s)], R=ctx.reel[wid(s)]||{}, pR=ctx.reel[wid(s-1)]||{};
+  const cw=wkc(ctx,today0()), done=s<cw;
+  const add=(level,title,text)=>out.push({level,title,text,week:s});
+  const hasB=!!R.bilanAt, hasI=!!R.importedAt;
+  const g=hasB?+R.genou:null, f=hasB?+R.fatigue:null, q=hasB?+R.sommeil:null;
+  const pg=pR.bilanAt?+pR.genou:null, pf=pR.bilanAt?+pR.fatigue:null;
+  if(g!=null){
+    if(g>=5||(g>=3&&pg!=null&&pg>=3)) add("alert","Genou : consulter le kiné","Douleur à "+g+"/10"+(g<5?" deux semaines de suite":"")+". Prends rendez-vous avec ton kiné et transforme la semaine suivante en semaine allégée, sans D-.");
+    else if(g>=3) add("alert","Genou : pas de D- pendant 5 jours","Douleur à "+g+"/10. Supprime toute descente courue pendant 5 jours : garde la montée (redescente en marchant), le vélo ou le ski."+dmSoon(ctx));
+    else if(g>=1) add("info","Genou : vigilance","Douleur à "+g+"/10. Plan maintenu : ajoute une série de step-downs et de travail de hanche, et surveille les sensations en descente.");
+  }
+  if(f!=null&&q!=null&&f>=6&&q<=4) add("warn","Fatigue et sommeil : semaine allégée","Fatigue à "+f+"/10 et sommeil à "+q+"/10. Allège la semaine suivante de 30 à 40 %, sans zone 3.");
+  else{
+    if(f!=null&&f>=7) add("warn","Fatigue haute : semaine allégée","Fatigue à "+f+"/10. Allège la semaine suivante de 30 à 40 %, sans zone 3.");
+    else if(f!=null&&f>=6&&pf!=null&&pf>=6) add("warn","Fatigue qui s’installe","Fatigue à 6/10 ou plus deux semaines de suite. Avance la prochaine semaine allégée prévue.");
+    if(q!=null&&q<=4) add("warn","Sommeil dégradé","Qualité du sommeil à "+q+"/10. Garde le volume, mais remplace les séances en zone 3 par de la zone 2.");
+  }
+  if(hasI){
+    const prev=[1,2,3,4].map(k=>ctx.reel[wid(s-k)]).filter(r=>r&&r.importedAt);
+    if(prev.length>=2){
+      const sp=[];
+      [["km","kilomètres"],["dp","D+"],["dm","D-"],["hours","heures"]].forEach(([k,lab])=>{ const avg=prev.reduce((a,r)=>a+(+r[k]||0),0)/prev.length, v=+R[k]||0; if(avg>0&&v>1.3*avg) sp.push(lab+" +"+Math.round((v/avg-1)*100)+" %"); });
+      if(sp.length) add("alert","Augmentation brutale par rapport aux semaines précédentes","Comparé à la moyenne de tes "+prev.length+" semaines précédentes : "+sp.join(", ")+". C’est le schéma de tes blessures passées : n’augmente pas la semaine suivante.");
+    }
+    if(P){ const T=totals(P), ov=[];
+      if(T.km>0&&(+R.km||0)>1.2*T.km) ov.push("kilomètres : "+r1(R.km)+" km pour "+r1(T.km)+" prévus");
+      if(T.dp>0&&(+R.dp||0)>1.2*T.dp) ov.push("D+ : "+Math.round(R.dp)+" m pour "+Math.round(T.dp)+" prévus");
+      if(T.dm>0&&(+R.dm||0)>1.2*T.dm) ov.push("D- : "+Math.round(R.dm)+" m pour "+Math.round(T.dm)+" prévus");
+      if(ov.length) add("warn","Au-dessus du programme","Plus de 20 % au-dessus du prévu ("+ov.join(" ; ")+"). La semaine suivante, reste exactement au programme"+(ov.some(x=>x.startsWith("D-"))?", surtout en descente":"")+".");
+    }
+  }
+  if(done&&P){
+    const T=totals(P), ss=P.sessions||[], ticked=ss.filter(x=>x.done).length, anyTick=Object.values(ctx.plan).some(w=>(w.sessions||[]).some(x=>x.done));
+    if(hasI&&(+R.hours||0)<1&&T.h>=2) add("alert","Coupure","Moins d’une heure d’activité cette semaine. Reprends par 2 semaines sans grosse descente avant la suite du plan.");
+    else if((hasI&&T.h>0&&(+R.hours||0)<0.6*T.h)||(!hasI&&anyTick&&ss.length&&ticked/ss.length<0.5)) add("warn","Semaine manquée","Moins de 60 % du volume prévu. Ne rattrape pas : refais cette semaine avant de reprendre la progression.");
+    const race=ss.some(x=>x.type==="race")||Object.values(ctx.objectifs||{}).some(o=>o.date&&wkc(ctx,parseISO(o.date))===s);
+    if(race&&g!=null&&g>=2) add("warn","Après la course","Genou à "+g+"/10 après une compétition : réduis le D- de moitié la semaine suivante.");
+    if(!hasB) add("info","Bilan à remplir","Le bilan de la semaine "+s+" n’a pas été rempli.");
+    if(!hasI) add("info","Import Garmin à faire","Les activités de la semaine "+s+" n’ont pas été importées.");
+    const good=k=>{ const r=ctx.reel[wid(k)], p=ctx.plan[wid(k)]; if(!r||!r.bilanAt||!r.importedAt||!p) return false; const h=totals(p).h, ratio=h?(+r.hours||0)/h:0; return +r.fatigue<=4&&+r.genou===0&&ratio>=0.9&&ratio<=1.1; };
+    if(s>=3&&good(s)&&good(s-1)&&good(s-2)) add("ok","Tout va bien","3 semaines de suite dans le plan, sans fatigue ni douleur. On reste sur le programme : la progression est déjà prévue.");
+  }
+  return out;
+}
+function alertsForWeek(ctx,n){
+  const l=[]; [n-1,n].forEach(s=>{ if(s>=1) l.push(...ruleAlerts(ctx,s)); });
+  const max=Math.max(-1,...l.map(a=>LV[a.level]));
+  return l.filter(a=>!(a.level==="ok"&&max>=LV.warn)).sort((a,b)=>LV[b.level]-LV[a.level]||b.week-a.week);
+}
+function renderAlerts(list){
+  if(!list.length) return null;
+  return el("div",{class:"alerts"},...list.map(a=>el("div",{class:"al "+a.level},el("b",{text:a.title}),el("span",{text:a.text}),el("small",{text:"D’après la semaine "+a.week}))));
+}
+
+/* ---------- graphique des bilans ---------- */
+let bchart=null;
+function renderBilanChart(){
+  if(!window.Chart) return;
+  const mw=maxWeek(), labels=[], F=[], Q=[], G=[];
+  for(let n=1;n<=mw;n++){ const r=reel[wid(n)]; labels.push("S"+n); const ok=r&&r.bilanAt; F.push(ok?+r.fatigue:null); Q.push(ok?+r.sommeil:null); G.push(ok?+r.genou:null); }
+  const muted=css("--muted"), rule=css("--rule"), cF=css("--p-af"), cQ=css("--p-bs"), cG=css("--red");
+  if(bchart&&bchart.data.labels.length!==labels.length){ bchart.destroy(); bchart=null; }
+  const ds=[["Fatigue",F,cF],["Qualité du sommeil",Q,cQ],["Genou",G,cG]].map(([label,data,c])=>({type:"line",label,data,borderColor:c,backgroundColor:c,pointRadius:3,borderWidth:2,spanGaps:true,tension:.25}));
+  if(!bchart){
+    bchart=new Chart($("bchart"),{data:{labels,datasets:ds},options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"index",intersect:false},
+      plugins:{legend:{display:false},tooltip:{callbacks:{title:i=>"Semaine "+(i[0].dataIndex+1),label:i=>i.dataset.label+" : "+(i.raw==null?"pas de bilan":i.raw+"/10")}}},
+      scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:10},maxRotation:0}},y:{min:0,max:10,ticks:{stepSize:2,color:muted,font:{size:11}},grid:{color:rule},border:{display:false}}},
+      onClick:(e,els)=>{ if(els.length) showWeek(els[0].index+1,true); }}});
+  } else { bchart.data.datasets.forEach((d,i)=>{ d.data=ds[i].data; d.borderColor=ds[i].borderColor; d.backgroundColor=ds[i].backgroundColor; }); bchart.options.scales.x.ticks.color=muted; bchart.options.scales.y.ticks.color=muted; bchart.options.scales.y.grid.color=rule; bchart.update(); }
+  const lg=$("blegend"); lg.replaceChildren();
+  [["Fatigue (10 = épuisé)",cF],["Qualité du sommeil (10 = excellent)",cQ],["Genou (0 = aucune douleur)",cG]].forEach(([t,c])=>lg.append(el("span",{},el("i",{style:"background:"+c+";border-radius:50%"}),t)));
+  if(!G.some(v=>v!=null)) lg.append(el("span",{text:"Aucun bilan pour l’instant : remplis-le en bas de chaque semaine."}));
+}
+
+/* ---------- vue d’ensemble coach ---------- */
+async function openOverview(){
+  const form=$("dlgform"); form.replaceChildren(); $("dlg").dataset.kind="ov";
+  const ul=el("ul",{class:"ov"},el("li",{class:"muted",text:"Analyse des programmes…"}));
+  form.append(el("h2",{},"Vue d’ensemble"),el("p",{class:"muted",text:"Les signaux de la semaine en cours et de la précédente, pour chaque programme."}),ul,
+    el("div",{class:"sticky-actions"},el("button",{type:"button",class:"btn",onclick:()=>$("dlg").close()},"Fermer")));
+  if(!$("dlg").open) $("dlg").showModal();
+  const people=Object.entries(profiles).sort((a,b)=>(a[0]===uid?-1:b[0]===uid?1:personName(a[1]).localeCompare(personName(b[1]))));
+  const rows=[];
+  for(const [id,p] of people){
+    try{
+      const [pl,re,ob]=await Promise.all(["plan","reel","objectifs"].map(c=>getDocs(collection(fs,"users",id,c))));
+      const ctx={plan:{},reel:{},objectifs:{},start:parseISO(/^\d{4}-\d{2}-\d{2}$/.test(p.planStart||"")?p.planStart:PLAN_START)};
+      pl.forEach(d=>ctx.plan[d.id]=d.data()); re.forEach(d=>ctx.reel[d.id]=d.data()); ob.forEach(d=>ctx.objectifs[d.id]=d.data());
+      const cw=Math.max(1,wkc(ctx,today0())), al=Object.keys(ctx.plan).length?alertsForWeek(ctx,cw):[];
+      rows.push({id,p,cw,al,empty:!Object.keys(ctx.plan).length});
+    }catch(e){ rows.push({id,p,err:e.code}); }
+  }
+  rows.sort((a,b)=>Math.max(-1,...(b.al||[]).map(x=>LV[x.level]))-Math.max(-1,...(a.al||[]).map(x=>LV[x.level])));
+  ul.replaceChildren();
+  rows.forEach(r=>{ const top=(r.al||[])[0], name=r.id===uid?"Moi ("+personName(r.p)+")":personName(r.p);
+    const go=el("button",{type:"button",class:"btn"},"Voir"); go.addEventListener("click",()=>{ $("dlg").close(); viewUser(r.id); window.scrollTo({top:0}); });
+    const body=r.err?el("div",{class:"muted",text:"Lecture impossible ("+r.err+")."}):r.empty?el("div",{class:"muted",text:"Pas encore de programme."}):r.al.length?el("ul",{},...r.al.filter(a=>a.level!=="info").map(a=>el("li",{},el("span",{class:"lvl "+a.level}),a.title+" (S"+a.week+")")),...(r.al.some(a=>a.level==="info")?[el("li",{class:"muted",text:r.al.filter(a=>a.level==="info").map(a=>a.title).join(", ")})]:[])):el("div",{class:"muted",text:"Aucun signal, semaine "+r.cw+"."});
+    ul.append(el("li",{},el("div",{class:"h"},el("b",{},el("span",{class:"lvl "+(top?top.level:"ok")}),name),go),body)); });
+}
+$("overview").addEventListener("click",openOverview);
+
+function renderAll(){ renderHeader(); renderObjs(); renderChart(); renderBilanChart(); renderWeek(); renderPlanList(); }
 </script>
 </body>
 </html>
