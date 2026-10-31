@@ -41,6 +41,15 @@ button{font:inherit;color:inherit;cursor:pointer}
 .top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;padding-bottom:14px;border-bottom:2px solid var(--ink)}
 .top h1{font-size:2.1rem}
 .top .sub{color:var(--muted);font-size:.95rem}
+.top{flex-wrap:wrap}
+.hero-l{min-width:0}
+.counts{display:flex;gap:22px;text-align:right}
+.cd{max-width:200px}
+.cd .l{font-size:.82rem;color:var(--muted);display:block}
+.cd b{display:block;font-family:"Barlow Condensed",sans-serif;font-size:3rem;font-weight:700;line-height:.95}
+.cd b.a{color:var(--red)}
+.cd .d{font-size:.82rem;color:var(--muted);display:block;line-height:1.3}
+@media (max-width:560px){.counts{width:100%;text-align:left;gap:16px}.cd{flex:1}.cd b{font-size:2.4rem}}
 .count{text-align:right}
 .count b{display:block;font-family:"Barlow Condensed",sans-serif;font-size:3.2rem;font-weight:700;line-height:.9}
 .count span{font-size:.9rem;color:var(--muted)}
@@ -190,11 +199,11 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
     <div class="coachnote hidden" id="coachnote"></div>
   </div>
   <header class="top">
-    <div>
-      <h1 id="hero-name">Plan trail</h1>
+    <div class="hero-l">
+      <h1 id="hero-name">Bienvenue</h1>
       <div class="sub" id="hero-sub"></div>
     </div>
-    <div class="count"><b id="countdown">–</b><span>jours</span></div>
+    <div class="counts" id="counts"></div>
   </header>
   <div class="where"><span class="blaze" aria-hidden="true"><i></i><i></i></span><span id="where">Chargement du plan…</span></div>
 
@@ -298,6 +307,8 @@ const PHASES = {"Reprise":"--p-rep","Base générale":"--p-bg","Base spécifique
 const TYPES = {run:"Course",trail:"Trail",muscu:"Muscu",me:"Endurance musc.",ski:"Ski de rando",test:"Test",race:"Compétition",other:"Autre"};
 const DAYS = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
 const DAYS_LONG=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"];
+const MONTHS_FULL = ["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
+const fullDate = d => d.getDate()+(d.getDate()===1?"er":"")+" "+MONTHS_FULL[d.getMonth()]+" "+d.getFullYear();
 const MONTHS = ["janv.","févr.","mars","avr.","mai","juin","juil.","août","sept.","oct.","nov.","déc."];
 let plan={}, reel={}, objectifs={}, metric="km", shownWeek=null, chart=null, loaded=false;
 const openSessions=new Set();
@@ -424,9 +435,20 @@ $("saveplanstart").addEventListener("click",async()=>{
 /* ---------- header ---------- */
 function renderHeader(){
   const t=today0();
-  const A=objList().filter(o=>o.prio==="A"&&parseISO(o.date)>=t)[0];
-  if(A){ const days=Math.round((parseISO(A.date)-t)/864e5); $("hero-name").textContent=A.name; $("hero-sub").textContent=[objSub(A),longDate(parseISO(A.date))].filter(Boolean).join(", "); $("countdown").textContent=days>0?"J-"+days:"Jour J"; }
-  else { $("hero-name").textContent="Plan trail"; $("hero-sub").textContent="Ajoute un objectif A pour lancer le compte à rebours."; $("countdown").textContent="–"; }
+  const prof=viewedProfile||{}, first=(prof.name||"").trim().split(/\s+/)[0]||(prof.email||"").split("@")[0]||"";
+  $("hero-name").textContent="Bienvenue"+(first?" "+first.charAt(0).toUpperCase()+first.slice(1):"");
+  const dates=Object.values(plan).flatMap(w=>(w.sessions||[]).map(x=>x.date)).filter(Boolean).sort();
+  $("hero-sub").textContent=dates.length?"Programme d’entraînement au trail du "+fullDate(parseISO(dates[0]))+" au "+fullDate(parseISO(dates[dates.length-1])):(loaded?"Aucune séance enregistrée pour l’instant.":"");
+  const up=objList().filter(o=>parseISO(o.date)>=t), next=up[0], A=up.find(o=>o.prio==="A");
+  const jtxt=o=>{ const d=Math.round((parseISO(o.date)-t)/864e5); return d>0?"J-"+d:"Jour J"; };
+  const block=(label,o,cls,detail)=>el("div",{class:"cd"},el("span",{class:"l",text:label}),el("b",{class:cls,text:jtxt(o)}),el("span",{class:"d",text:detail}));
+  const box=$("counts"); box.replaceChildren();
+  if(next&&A&&next.id===A.id) box.append(block("Prochaine course, objectif principal",A,"a",[A.name,objSub(A),fullDate(parseISO(A.date))].filter(Boolean).join(", ")));
+  else{
+    if(next) box.append(block("Prochaine course",next,"",next.name+", "+fullDate(parseISO(next.date))));
+    if(A) box.append(block("Objectif principal",A,"a",[A.name,objSub(A),fullDate(parseISO(A.date))].filter(Boolean).join(", ")));
+  }
+  if(!next) box.append(el("div",{class:"cd"},el("span",{class:"d",text:"Ajoute un objectif pour lancer le compte à rebours."})));
   const w=weekOf(t), mw=maxWeek(), p=plan[wid(currentWeek())];
   let txt;
   if(!Object.keys(plan).length) txt= loaded? "Ton plan est vide. Charge le plan initial ou importe des séances." : "Chargement du plan…";
