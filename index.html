@@ -70,7 +70,8 @@ section{margin-top:34px}
 .phase-tag{display:inline-block;font-size:.85rem;padding:1px 9px;border-radius:999px;color:#fff;margin-right:6px;vertical-align:middle}
 .wk-meta{margin:6px 0 0;color:var(--muted)}
 .focus{margin:10px 0 0;padding-left:12px;border-left:3px solid var(--rule)}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
+@media (max-width:560px){.stats{grid-template-columns:1fr 1fr}}
 .stat{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:10px 12px}
 .stat .k{font-size:.82rem;color:var(--muted)}
 .stat .v{font-family:"Barlow Condensed",sans-serif;font-size:1.6rem;font-weight:600;line-height:1.1}
@@ -451,6 +452,7 @@ function renderWeek(){
     ...objList().filter(o=>weekOf(parseISO(o.date))===n).map(o=>el("div",{class:"obj-in-week"},el("b",{text:"Objectif "+o.prio+" : "+o.name}),el("div",{class:"muted",text:[objSub(o),longDate(parseISO(o.date))].filter(Boolean).join(", ")}))),
     el("div",{class:"stats"},
       stat("Kilomètres",r1(t.km)+" km",has?"Réalisé : "+r1(r.km||0)+" km":null),
+      stat("D+",Math.round(t.dp)+" m",has?"Réalisé : "+Math.round(r.dp||0)+" m":null),
       stat("D- couru",Math.round(t.dm)+" m",has?"Réalisé : "+Math.round(r.dm||0)+" m":null),
       stat("Durée",r1(t.h)+" h",has?"Réalisé : "+r1(r.hours||0)+" h":null)));
   const days=el("div",{class:"days"}), td=iso(today0());
@@ -465,7 +467,7 @@ function renderWeek(){
 }
 function sessionCard(w,s){
   const card=el("div",{class:"sess"+(s.done?" done":"")+(openSessions.has(s.id)?" open":"")});
-  const bits=[durTxt(s.duration)]; if(+s.km) bits.push(r1(+s.km)+" km"); if(+s.dm) bits.push(s.dm+" m D-"); if(s.zone) bits.push(s.zone);
+  const bits=[durTxt(s.duration)]; if(+s.km) bits.push(r1(+s.km)+" km"); if(+s.dp) bits.push(s.dp+" m D+"); if(+s.dm) bits.push(s.dm+" m D-"); if(s.zone) bits.push(s.zone);
   const cb=el("input",{type:"checkbox","aria-label":"Séance faite"}); cb.checked=!!s.done;
   cb.addEventListener("change",()=>{ s.done=cb.checked; card.classList.toggle("done",cb.checked); saveWeek(w).catch(e=>alert("Modification non enregistrée ("+e.code+").")); });
   const main=el("button",{class:"sess-main","aria-expanded":openSessions.has(s.id)},
@@ -506,7 +508,7 @@ function renderPlanList(){
     const t=totals(w), r=reel[wid(w.num)], s=parseISO(w.start);
     ul.append(el("li",{class:w.num===cw?"cur":""},el("button",{onclick:()=>showWeek(w.num,true)},
       el("span",{class:"n",text:"S"+w.num}),el("span",{},w.label||"",el("span",{class:"muted",text:", "+fmt(s)})),
-      el("span",{class:"num",text:r1(t.km)+" km, "+Math.round(t.dm)+" m"+(r&&r.importedAt?" (fait : "+r1(r.km||0)+" km)":"")}))));
+      el("span",{class:"num",text:r1(t.km)+" km, +"+Math.round(t.dp)+" / −"+Math.round(t.dm)+" m"+(r&&r.importedAt?" (fait : "+r1(r.km||0)+" km)":"")}))));
   });
 }
 
@@ -542,7 +544,8 @@ function openEditor(s,weekNum){
   form.append(el("h2",{},isNew?"Nouvelle séance":"Modifier la séance"),
     el("div",{class:"grid2"},field("Date",inp("date","date")),field("Type",sel)),
     field("Titre",inp("title")),
-    el("div",{class:"grid3"},field("Durée (min)",inp("duration","number",{min:0,step:5})),field("Distance (km)",inp("km","number",{min:0,step:.1})),field("D- (m)",inp("dm","number",{min:0,step:10}))),
+    el("div",{class:"grid2"},field("Durée (min)",inp("duration","number",{min:0,step:5})),field("Distance (km)",inp("km","number",{min:0,step:.1}))),
+    el("div",{class:"grid2"},field("D+ (m)",inp("dp","number",{min:0,step:10})),field("D- (m)",inp("dm","number",{min:0,step:10}))),
     field("Terrain",inp("terrain")),field("Zone de FC et allure",inp("zone")),field("Objectif",inp("objective")),field("Détails",inp("details","textarea")),
     el("h3",{style:"font-size:1.15rem;margin:6px 0"},"Exercices"),exBox,
     el("button",{type:"button",class:"btn",onclick:()=>{cur.exercises=cur.exercises||[];cur.exercises.push({name:"",sets:"3",reps:"",rest:"",load:"",cue:""});drawEx();}},"Ajouter un exercice"),
@@ -580,7 +583,9 @@ $("csv").addEventListener("change",async e=>{
     const type=(r[iT]||"").toLowerCase(); if(type.includes("ski en station")||type.includes("resort")) continue;
     const a=agg[n]||(agg[n]={km:0,dm:0,dp:0,hours:0,n:0});
     a.hours+=durH(r[iDur]); a.n++; used++;
-    if(/course|trail|running|\brun/.test(type)){ let km=gnum(r[iDist]); if(km>300) km/=1000; a.km+=km; const dm=gnum(r[iDm]), dp=gnum(r[iDp]); if(dm<Math.max(1,km)*300) a.dm+=dm; if(dp<Math.max(1,km)*300) a.dp+=dp; }
+    let km=gnum(r[iDist]); if(km>300) km/=1000; const dm=gnum(r[iDm]), dp=gnum(r[iDp]), sane=Math.max(1,km)*300;
+    if(/course|trail|running|\brun/.test(type)){ a.km+=km; if(dm<sane) a.dm+=dm; if(dp<sane) a.dp+=dp; }
+    else if(/randonn|hik|ski de rando|backcountry|ski touring/.test(type)){ if(dp<sane) a.dp+=dp; }
   }
   const ns=Object.keys(agg);
   if(!ns.length){ say("importmsg","Aucune activité de ce fichier ne tombe dans les dates du plan."); e.target.value=""; return; }
@@ -603,37 +608,51 @@ $("sesscsv").addEventListener("change",async e=>{
   const file=e.target.files[0]; if(!file) return; e.target.value="";
   const {rows}=parseCSV(await file.text()); const h=(rows.shift()||[]).map(norm);
   const col=(...n)=>h.findIndex(x=>n.includes(x));
-  const C={id:col("id"),date:col("date"),type:col("type"),title:col("titre","title"),dur:col("duree_min","duree","duration"),km:col("km","distance"),dm:col("d_moins","d","denivele_negatif","dm"),dp:col("d_plus","dp"),terrain:col("terrain"),zone:col("zone"),obj:col("objectif","objective"),det:col("details","detail"),ex:col("exercices","exercises"),ph:col("semaine_phase"),wl:col("semaine_titre"),wf:col("semaine_focus")};
-  if(C.date<0||C.title<0){ say("sessmsg","Colonnes date ou titre introuvables. Utilise le modèle fourni.",true); return; }
+  const C={id:col("id"),date:col("date"),type:col("type"),title:col("titre","title"),dur:col("duree_min","duree","duration"),km:col("km","distance"),dp:col("d_plus","dp","denivele_positif"),dm:col("d_moins","dm","denivele_negatif"),terrain:col("terrain"),zone:col("zone"),obj:col("objectif","objective"),det:col("details","detail"),ex:col("exercices","exercises"),ph:col("semaine_phase"),wl:col("semaine_titre"),wf:col("semaine_focus")};
+  if(C.id<0&&(C.date<0||C.title<0)){ say("sessmsg","Il faut au moins les colonnes date et titre, ou une colonne id pour mettre à jour des séances existantes. Utilise le modèle fourni.",true); return; }
   const get=(r,i)=>i<0?"":(r[i]||"").trim();
-  const items=[], bad=[];
-  rows.forEach((r,k)=>{ const date=parseDateCell(get(r,C.date)); const title=get(r,C.title);
-    if(!date||!title){ bad.push(k+2); return; }
+  const findById=id=>{ for(const w of Object.values(plan)){ const x=(w.sessions||[]).find(z=>z.id===id); if(x) return {w,x}; } return null; };
+  // Seules les colonnes présentes dans le fichier modifient une séance existante.
+  const patchOf=r=>{ const p={};
+    if(C.type>=0&&get(r,C.type)) p.type=TYPE_ALIASES[norm(get(r,C.type))]||"other";
+    if(C.title>=0&&get(r,C.title)) p.title=get(r,C.title);
+    if(C.dur>=0) p.duration=fnum(get(r,C.dur)); if(C.km>=0) p.km=fnum(get(r,C.km));
+    if(C.dp>=0) p.dp=fnum(get(r,C.dp)); if(C.dm>=0) p.dm=fnum(get(r,C.dm));
+    if(C.terrain>=0) p.terrain=get(r,C.terrain); if(C.zone>=0) p.zone=get(r,C.zone); if(C.obj>=0) p.objective=get(r,C.obj);
+    if(C.det>=0) p.details=get(r,C.det).replace(/\\n/g,"\n"); if(C.ex>=0) p.exercises=parseExercises(get(r,C.ex));
+    return p; };
+  const items=[], bad=[]; let nUpd=0, nNew=0;
+  rows.forEach((r,k)=>{
+    const id=get(r,C.id), found=id?findById(id):null, dateCell=parseDateCell(get(r,C.date));
+    const date=dateCell||(found&&found.x.date); const patch=patchOf(r);
+    if(!date||!(patch.title||(found&&found.x.title))){ bad.push(k+2); return; }
     const n=weekOf(parseISO(date)); if(n<1){ bad.push(k+2); return; }
-    items.push({n,meta:{phase:get(r,C.ph),label:get(r,C.wl),focus:get(r,C.wf)},s:{id:get(r,C.id),date,type:TYPE_ALIASES[norm(get(r,C.type))]||"other",title,duration:fnum(get(r,C.dur)),km:fnum(get(r,C.km)),dm:fnum(get(r,C.dm)),dp:fnum(get(r,C.dp)),terrain:get(r,C.terrain),zone:get(r,C.zone),objective:get(r,C.obj),details:get(r,C.det).replace(/\\n/g,"\n"),exercises:parseExercises(get(r,C.ex)),done:false}}); });
+    const base=found?clean(found.x):{id:"",type:"other",title:"",duration:0,km:0,dp:0,dm:0,terrain:"",zone:"",objective:"",details:"",exercises:[],done:false};
+    const sess={...base,...patch,date,id:id||""}; found?nUpd++:nNew++;
+    items.push({n,from:found?found.w.num:null,meta:{phase:get(r,C.ph),label:get(r,C.wl),focus:get(r,C.wf)},s:sess}); });
   if(!items.length){ say("sessmsg","Aucune séance valide dans ce fichier"+(bad.length?" (lignes à vérifier : "+bad.join(", ")+")":"")+".",true); return; }
   const weeksTouched=[...new Set(items.map(x=>x.n))].sort((a,b)=>a-b), replace=$("replaceweeks").checked;
-  const first=items.map(x=>x.s.date).sort()[0], last=items.map(x=>x.s.date).sort().pop();
-  if(!confirm(items.length+" séance"+(items.length>1?"s":"")+" du "+fmt(parseISO(first))+" au "+fmt(parseISO(last))+" ("+weeksTouched.length+" semaine"+(weeksTouched.length>1?"s":"")+").\n"+(replace?"Les séances existantes de ces semaines seront remplacées.":"Les séances seront ajoutées, ou mises à jour si leur identifiant existe déjà.")+(bad.length?"\nLignes ignorées : "+bad.join(", "):"")+"\n\nImporter ?")) return;
+  const ds=items.map(x=>x.s.date).sort();
+  if(!confirm(items.length+" ligne"+(items.length>1?"s":"")+" du "+fmt(parseISO(ds[0]))+" au "+fmt(parseISO(ds[ds.length-1]))+" : "+nUpd+" mise"+(nUpd>1?"s":"")+" à jour, "+nNew+" nouvelle"+(nNew>1?"s":"")+".\n"+(replace?"Les autres séances de ces "+weeksTouched.length+" semaine"+(weeksTouched.length>1?"s":"")+" seront supprimées.":"Les autres séances ne sont pas touchées.")+(bad.length?"\nLignes ignorées : "+bad.join(", "):"")+"\n\nImporter ?")) return;
   const work={}; const getW=n=>work[n]||(work[n]=clean(plan[wid(n)]||{num:n,start:weekStart(n),phase:"Plan",label:"Semaine "+n,focus:"",sessions:[]}));
   if(replace) weeksTouched.forEach(n=>getW(n).sessions=[]);
-  items.forEach(({n,meta,s},k)=>{
-    if(s.id){ for(const w of Object.values(plan)){ if((w.sessions||[]).some(x=>x.id===s.id)&&w.num!==n){ const ow=getW(w.num); ow.sessions=ow.sessions.filter(x=>x.id!==s.id); } } }
+  items.forEach(({n,from,meta,s},k)=>{
+    if(from&&from!==n){ const ow=getW(from); ow.sessions=(ow.sessions||[]).filter(x=>x.id!==s.id); }
     const w=getW(n); w.sessions=w.sessions||[];
     if(!s.id) s.id=wid(n)+"-i"+Date.now().toString(36)+k;
-    const i=w.sessions.findIndex(x=>x.id===s.id); if(i>=0){ s.done=w.sessions[i].done||false; w.sessions[i]=s; } else w.sessions.push(s);
+    const i=w.sessions.findIndex(x=>x.id===s.id); if(i>=0) w.sessions[i]=s; else w.sessions.push(s);
     if(meta.phase) w.phase=meta.phase; if(meta.label) w.label=meta.label; if(meta.focus) w.focus=meta.focus;
   });
   Object.values(work).forEach(w=>w.sessions.sort((a,b)=>a.date.localeCompare(b.date)));
-  try{ await batchWrite(Object.values(work).map(w=>[userDoc("plan",wid(w.num)),w])); say("sessmsg",items.length+" séance"+(items.length>1?"s importées":" importée")+"."); }
+  try{ await batchWrite(Object.values(work).map(w=>[userDoc("plan",wid(w.num)),w])); say("sessmsg",nUpd+" séance"+(nUpd>1?"s":"")+" mise"+(nUpd>1?"s":"")+" à jour, "+nNew+" ajoutée"+(nNew>1?"s":"")+"."); }
   catch(err){ say("sessmsg","L’import n’a pas pu être enregistré ("+(err.code||"erreur")+").",true); }
 });
 $("exportcsv").addEventListener("click",()=>{
-  const head=["id","date","type","titre","duree_min","km","d_moins","terrain","zone","objectif","details","exercices","semaine_phase","semaine_titre","semaine_focus"];
+  const head=["id","date","type","titre","duree_min","km","d_plus","d_moins","terrain","zone","objectif","details","exercices","semaine_phase","semaine_titre","semaine_focus"];
   const lines=[head.join(";")];
   Object.values(plan).sort((a,b)=>a.num-b.num).forEach(w=>(w.sessions||[]).forEach((s,i)=>{
     const d=parseISO(s.date), ex=(s.exercises||[]).map(x=>[x.name,x.sets,x.reps,x.rest,x.load,x.cue].map(v=>String(v??"").replace(/\|/g,"/")).join(" | ")).join(" || ");
-    lines.push([s.id,pad(d.getDate())+"/"+pad(d.getMonth()+1)+"/"+d.getFullYear(),s.type,s.title,s.duration,String(s.km||"").replace(".",","),s.dm||"",s.terrain,s.zone,s.objective,(s.details||"").replace(/\n/g,"\\n"),ex,i===0?w.phase:"",i===0?w.label:"",i===0?w.focus:""].map(csvCell).join(";")); }));
+    lines.push([s.id,pad(d.getDate())+"/"+pad(d.getMonth()+1)+"/"+d.getFullYear(),s.type,s.title,s.duration,String(s.km||"").replace(".",","),s.dp||"",s.dm||"",s.terrain,s.zone,s.objective,(s.details||"").replace(/\n/g,"\\n"),ex,i===0?w.phase:"",i===0?w.label:"",i===0?w.focus:""].map(csvCell).join(";")); }));
   download("seances-plan-trail.csv","\uFEFF"+lines.join("\r\n"),"text/csv;charset=utf-8");
 });
 
@@ -646,7 +665,7 @@ $("exportics").addEventListener("click",()=>{
   let count=0;
   Object.values(plan).sort((a,b)=>a.num-b.num).forEach(w=>(w.sessions||[]).forEach(s=>{
     const d=parseISO(s.date), e=new Date(d.getFullYear(),d.getMonth(),d.getDate()+1), ymd=x=>x.getFullYear()+pad(x.getMonth()+1)+pad(x.getDate());
-    const bits=[durTxt(s.duration)]; if(+s.km) bits.push(r1(+s.km)+" km"); if(+s.dm) bits.push(s.dm+" m D-");
+    const bits=[durTxt(s.duration)]; if(+s.km) bits.push(r1(+s.km)+" km"); if(+s.dp) bits.push(s.dp+" m D+"); if(+s.dm) bits.push(s.dm+" m D-");
     const desc=["Semaine "+w.num+" ("+(w.phase||"")+") : "+(w.label||""),bits.join(", ")];
     [["Terrain",s.terrain],["Zone",s.zone],["Objectif",s.objective]].forEach(([k,v])=>{ if(v) desc.push(k+" : "+v); });
     if(s.details) desc.push("\n"+s.details);
