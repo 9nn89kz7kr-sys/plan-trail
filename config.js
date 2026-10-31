@@ -13,5 +13,5 @@ window.FIREBASE_CONFIG = {
 
 // Lundi de la semaine 1 du plan (format AAAA-MM-JJ).
 window.PLAN_START = "2026-11-02";
-
+window.COACH_EMAILS = ["louisleclercq0@gmail.com"];
 
