@@ -174,6 +174,11 @@ textarea{min-height:70px;resize:vertical}
 .ov li{padding:10px 0;border-bottom:1px solid var(--rule)}
 .ov .h{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .ov ul{margin:6px 0 0;padding-left:18px;font-size:.9rem}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;justify-content:center;gap:4px;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--rule);padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px))}
+.tabbar a{flex:1;max-width:200px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;border-radius:10px;color:var(--muted);text-decoration:none;font-size:.78rem;font-weight:600}
+.tabbar a svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tabbar a[aria-current="page"]{color:var(--red);background:color-mix(in srgb,var(--red) 10%,transparent)}
+#app{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))}
 .foot{margin-top:40px;font-size:.85rem;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 dialog{border:1px solid var(--rule);border-radius:12px;background:var(--surface);color:var(--ink);padding:0;width:min(640px,100% - 20px);max-height:calc(100% - 40px)}
 dialog::backdrop{background:rgba(10,15,20,.5)}
@@ -214,6 +219,7 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
     <button class="btn" id="manageacc" type="button">Gérer les accès</button>
     <div class="coachnote hidden" id="coachnote"></div>
   </div>
+  <div data-view="home">
   <header class="top">
     <div class="hero-l">
       <h1 id="hero-name">Bienvenue</h1>
@@ -249,14 +255,21 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
   </section>
 
   <section id="week" aria-live="polite"></section>
+  </div>
 
-  <section>
+  <div data-view="plan" class="hidden">
+
+  <section style="margin-top:8px">
     <h2 class="sec-title">Tout le plan</h2>
+    <p class="muted" id="plansum"></p>
     <div id="planlist"></div>
   </section>
+  </div>
 
-  <section>
-    <h2 class="sec-title">Importer et exporter</h2>
+  <div data-view="data" class="hidden">
+
+  <section style="margin-top:8px">
+    <h2 class="sec-title">Données</h2>
     <div class="tools">
       <div class="panel">
         <h3>Activités Garmin</h3>
@@ -300,8 +313,16 @@ dialog::backdrop{background:rgba(10,15,20,.5)}
     </div>
   </section>
 
+  </div>
+
   <div class="foot"><span id="who"></span><button class="btn" id="logout" type="button">Se déconnecter</button></div>
 </div>
+
+<nav class="tabbar hidden" id="tabbar" aria-label="Navigation">
+  <a href="#accueil" data-v="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Accueil</a>
+  <a href="#plan" data-v="plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg>Plan complet</a>
+  <a href="#donnees" data-v="data"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg>Données</a>
+</nav>
 
 <dialog id="dlg"><form method="dialog" class="dlg-in" id="dlgform"></form></dialog>
 
@@ -375,7 +396,7 @@ getRedirectResult(auth).catch(()=>{});
 $("logout").addEventListener("click",()=>signOut(auth));
 $("gatelogout").addEventListener("click",()=>signOut(auth));
 const withTimeout=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(()=>r("timeout"),ms))]);
-function showGate(msg,signedIn){ $("app").classList.add("hidden"); $("gate").classList.remove("hidden"); $("gatemsg").textContent=msg; $("login").classList.toggle("hidden",!!signedIn); $("gatelogout").classList.toggle("hidden",!signedIn); }
+function showGate(msg,signedIn){ $("app").classList.add("hidden"); $("tabbar").classList.add("hidden"); $("gate").classList.remove("hidden"); $("gatemsg").textContent=msg; $("login").classList.toggle("hidden",!!signedIn); $("gatelogout").classList.toggle("hidden",!signedIn); }
 onAuthStateChanged(auth,async user=>{
   unsubs.forEach(u=>u()); unsubs=[]; coachUnsubs.forEach(u=>u()); coachUnsubs=[];
   plan={}; reel={}; objectifs={}; profiles={}; access=[]; loaded=false;
@@ -385,7 +406,7 @@ onAuthStateChanged(auth,async user=>{
   showGate("Connexion en cours…",true);
   try{ await withTimeout(setDoc(doc(fs,"users",uid),{email,name:user.displayName||"",lastLogin:new Date().toISOString()},{merge:true}),6000); }
   catch(e){ if(e.code==="permission-denied"){ showGate("Le compte "+email+" n’a pas encore accès à ce site. Demande au coach de t’ajouter, puis reconnecte-toi.",true); return; } }
-  $("gate").classList.add("hidden"); $("app").classList.remove("hidden");
+  $("gate").classList.add("hidden"); $("app").classList.remove("hidden"); $("tabbar").classList.remove("hidden");
   $("who").textContent="Connecté : "+(email||"compte Google")+(isCoach?" (coach)":"");
   $("coachbar").classList.toggle("hidden",!isCoach);
   if(isCoach){
@@ -635,12 +656,14 @@ function bilanForm(n){
 function renderPlanList(){
   const box=$("planlist"); box.replaceChildren();
   const weeks=Object.values(plan).sort((a,b)=>a.num-b.num);
+  const tot=weeks.reduce((a,w)=>{const t=totals(w);a.km+=t.km;a.dp+=t.dp;a.h+=t.h;a.n+=(w.sessions||[]).length;return a;},{km:0,dp:0,h:0,n:0});
+  $("plansum").textContent=weeks.length?weeks.length+" semaines, "+tot.n+" séances, "+Math.round(tot.km)+" km, "+Math.round(tot.dp)+" m D+ et "+Math.round(tot.h)+" h au total. Touche une semaine pour l’ouvrir.":"";
   if(!weeks.length){ box.append(el("p",{class:"muted",text:loaded?"Aucune semaine dans le plan pour l’instant.":"Chargement…"})); return; }
   const cw=weekOf(today0()); let cur=null, ul=null;
   weeks.forEach(w=>{
     if(w.phase!==cur){ cur=w.phase; ul=el("ul",{class:"wlist"}); box.append(el("div",{class:"phase-block"},el("h3",{},el("i",{style:"background:"+phaseColor(cur)}),cur||"Sans phase"),ul)); }
     const t=totals(w), r=reel[wid(w.num)], s=parseISO(w.start);
-    ul.append(el("li",{class:w.num===cw?"cur":""},el("button",{onclick:()=>showWeek(w.num,true)},
+    ul.append(el("li",{class:w.num===cw?"cur":""},el("button",{onclick:()=>goWeek(w.num)},
       el("span",{class:"n",text:"S"+w.num}),el("span",{},w.label||"",el("span",{class:"muted",text:", "+fmt(s)})),
       el("span",{class:"num",text:r1(t.km)+" km, +"+Math.round(t.dp)+" / −"+Math.round(t.dm)+" m"+(r&&r.importedAt?" (fait : "+r1(r.km||0)+" km)":"")}))));
   });
@@ -948,6 +971,21 @@ async function openOverview(){
     ul.append(el("li",{},el("div",{class:"h"},el("b",{},el("span",{class:"lvl "+(top?top.level:"ok")}),name),go),body)); });
 }
 $("overview").addEventListener("click",openOverview);
+
+/* ---------- pages ---------- */
+const VIEWS={accueil:"home",plan:"plan",donnees:"data"};
+let currentView=null;
+function route(){
+  const v=VIEWS[location.hash.slice(1)]||"home";
+  const changed=v!==currentView; currentView=v;
+  document.querySelectorAll("[data-view]").forEach(e=>e.classList.toggle("hidden",e.dataset.view!==v));
+  document.querySelectorAll("#tabbar a").forEach(a=>{ if(a.dataset.v===v) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current"); });
+  if(changed) window.scrollTo({top:0});
+  if(v==="home"){ if(chart) chart.resize(); if(bchart) bchart.resize(); }
+}
+window.addEventListener("hashchange",route);
+route();
+function goWeek(n){ if(currentView!=="home") location.hash="accueil"; setTimeout(()=>showWeek(n,true),40); }
 
 function renderAll(){ renderHeader(); renderObjs(); renderChart(); renderBilanChart(); renderWeek(); renderPlanList(); }
 </script>
